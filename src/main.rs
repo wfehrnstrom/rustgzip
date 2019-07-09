@@ -40,7 +40,7 @@ pub struct Opt {
     synchronous: bool,
     #[structopt(short, long, help="operate recursively on directories")]
     recursive: bool,
-    #[structopt(short="S", long, help="use suffix SUF on compressed files", default_value="gz")]
+    #[structopt(short="S", long, help="use suffix SUF on compressed files", default_value=".gz")]
     suffix: String,
     #[structopt(short, long, help="test compressed file integrity")]
     test: bool,

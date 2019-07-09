@@ -1,5 +1,6 @@
 use std::path::{PathBuf, Path};
 use std::fs::{File, read_dir, ReadDir};
+use std::io::{Error, ErrorKind};
 use crate::{Opt, EXIT_CODE};
 use crate::warn;
 use crate::util;
@@ -18,17 +19,26 @@ pub fn files (files: Vec<PathBuf>, opt: &mut Opt) {
 fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
     let fstr = match filepath.to_str() {
         Some(s) => s,
-        None => panic!("{}: File given is not in valid unicode!", constants::PROGRAM_NAME)
+        None => panic!("{}: file given is not in valid unicode!", constants::PROGRAM_NAME)
     };
-    if fstr == "-" {
-        let cflag = opt.stdout;
-        self::stdin(opt);
-        opt.stdout = cflag;
-        Ok(())
+    if check_for_stdin(fstr, opt) {
+        return Ok(());
     }
     else{
         let fpath: &Path = filepath.as_path();
-        let f = File::open(fpath)?;
+        let f = match File::open(fpath) {
+            Ok(file) => file,
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::NotFound => eprintln!("{}: {} not found", constants::PROGRAM_NAME, fstr),
+                    ErrorKind::PermissionDenied => eprintln!("{}: permission denied to open {}",
+                        constants::PROGRAM_NAME, fstr),
+                    _ => eprintln!("{}: unknown error occured while opening {}",
+                            constants::PROGRAM_NAME, fstr)
+                }
+                return Err(e);
+            }
+        };
         let stat = f.metadata()?;
         if stat.is_dir() {
             let dir: ReadDir = read_dir(fpath)?;
@@ -37,13 +47,33 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
         }
         else {
             let wrapped_file = util::WrappedFile {path: fpath, file: &f};
-            if util::check_file_modes(&wrapped_file, opt)? {
-                println!("file modes good!");
-                unimplemented!();
+            if !util::check_file_modes(&wrapped_file, opt)? {
+                return Err(Error::new(ErrorKind::InvalidData, ""));
             }
+            // if this fails, we must have something that isn't a regular file
+            let mtime = match util::get_input_time(&stat) {
+                Ok(mtime) => mtime,
+                Err(_) => return Err(Error::new(ErrorKind::InvalidData, ""))
+            };
+            let size = util::get_input_size(&stat);
+            let part_nb = 0;
+            let ofname = match util::make_ofname(&filepath, opt) {
+                Ok(boxed_path_buf) => boxed_path_buf,
+                Err(_) => return Err(std::io::Error::new(ErrorKind::InvalidData, ""))
+            };
         }
         Ok(())
     }
+}
+
+fn check_for_stdin (fstr: &str, opt: &mut Opt) -> bool {
+    if fstr == "-" {
+        let cflag = opt.stdout;
+        self::stdin(opt);
+        opt.stdout = cflag;
+        return true;
+    }
+    return false;
 }
 
 fn stdin (_opt: &Opt) {
