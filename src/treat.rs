@@ -4,6 +4,7 @@ use std::io::{Error, ErrorKind};
 use crate::{Opt, EXIT_CODE};
 use crate::warn;
 use crate::util;
+use crate::zip;
 
 use crate::constants;
 
@@ -61,6 +62,8 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
                 Ok(boxed_path_buf) => boxed_path_buf,
                 Err(_) => return Err(std::io::Error::new(ErrorKind::InvalidData, ""))
             };
+            let ofname_str: &str = (*ofname).to_str().unwrap();
+            zip::into (&wrapped_file, ofname_str)?;
         }
         Ok(())
     }

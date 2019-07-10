@@ -7,6 +7,7 @@ extern crate structopt;
 mod constants;
 mod treat;
 mod util;
+mod zip;
 
 use std::path::PathBuf;
 use structopt::StructOpt;
