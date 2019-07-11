@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::io;
+use std::io::Write;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -15,9 +17,9 @@ use std::convert::TryInto;
 
 use num::Integer;
 
-pub struct WrappedDir<'a, 'b> {
+pub struct WrappedDir<'a> {
     pub path: &'a Path,
-    pub dir: &'b fs::ReadDir
+    pub dir: fs::ReadDir
 }
 
 pub struct WrappedFile<'a, 'b> {
@@ -173,7 +175,6 @@ pub fn make_ofname (f: &PathBuf, opt: &Opt) -> Result<Box<PathBuf>, ()> {
             let path_str = f.to_str().unwrap();
             if opt.decompress {
                 // strip known extension off of end of file
-                println!("suffix: {}", suffix);
                 let res: Vec<&str> = path_str.rsplit('.').skip(1).collect();
                 let res: Vec<&str> = res.iter().rev().map(|&x| x).collect();
                 let res: String = res.join(".");
@@ -198,16 +199,17 @@ fn get_suffix (p: &PathBuf, opt: &Opt) -> Option<String> {
         match p.extension() {
             Some(os_str) => {
                 let suffix = strip_leading_dot(os_str.to_str().unwrap());
-                println!("inside get_suffix: {}", suffix);
                 if opt.suffix.is_empty () || suffix_known(suffix) {
                     return Some(String::from(suffix));
                 }
+                unknown_suffix_warning(get_file_name(p), opt);
                 return None;
             },
             None => {
                 if opt.suffix.is_empty () {
                     return Some(String::from (""));
                 }
+                unknown_suffix_warning(get_file_name(p), opt);
                 return None;
             }
         }
@@ -222,10 +224,7 @@ fn get_suffix (p: &PathBuf, opt: &Opt) -> Option<String> {
         };
         if has_compression_suffix && !opt.force {
             let suffix = p.extension().unwrap().to_str().unwrap();
-            let file_name = match p.file_name() {
-                Some(name) => name.to_str().unwrap(),
-                None => ""
-            };
+            let file_name = get_file_name(p);
             eprintln!("{}: {} already has .{} suffix -- unchanged", constants::PROGRAM_NAME,
                 file_name, suffix);
             return None;
@@ -238,6 +237,20 @@ fn suffix_known (suffix: &str) -> bool {
     return KNOWN_SUFFIXES.contains (&suffix);
 }
 
+fn get_file_name (p: &PathBuf) -> &str {
+    match p.file_name() {
+        Some(name) => name.to_str().unwrap(),
+        None => ".."
+    }
+}
+
+fn unknown_suffix_warning (filename: &str, opt: &Opt) {
+    if (opt.verbose > 0) || (!opt.recursive && !opt.quiet) {
+        eprintln!("{}: {}: unknown suffix -- ignored", constants::PROGRAM_NAME,
+            filename);
+    }
+}
+
 pub fn strip_leading_dot (suff: &str) -> &str {
     if let Some(first_char) = suff.chars().next() {
         if first_char == '.' {
@@ -245,4 +258,18 @@ pub fn strip_leading_dot (suff: &str) -> &str {
         }
     }
     return suff;
+}
+
+pub fn yesno () -> bool {
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    match io::stdin().read_line(&mut input) {
+        Ok(_) => {
+            match input.chars().next() {
+                Some(c) => (c == 'y' || c == 'Y'),
+                None => false
+            }
+        },
+        Err(_) => false
+    }
 }

@@ -10,5 +10,6 @@ pub fn into (input_file: &WrappedFile, ofname: &str, level: u32) -> std::io::Res
                     .filename (ofname)
                     .write (output_file, Compression::new(level));
     gz.write_all(bytes_read.as_slice())?;
+    gz.finish()?;
     return Ok(());
 }

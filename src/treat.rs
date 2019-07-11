@@ -1,5 +1,5 @@
 use std::path::{PathBuf, Path};
-use std::fs::{File, read_dir, ReadDir};
+use std::fs::{File, read_dir, ReadDir, metadata};
 use std::io::{Error, ErrorKind};
 use std::convert::TryInto;
 use crate::{Opt, EXIT_CODE};
@@ -14,7 +14,7 @@ pub fn files (files: Vec<PathBuf>, opt: &mut Opt) {
     for file in files {
         match self::file (file, opt) {
             Ok(()) => continue,
-            Err(_) => panic!("{}: operation unsuccessful!", constants::PROGRAM_NAME)
+            Err(_) => continue
         }
     }
 }
@@ -24,6 +24,7 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
         Some(s) => s,
         None => panic!("{}: file given is not in valid unicode!", constants::PROGRAM_NAME)
     };
+    println!("filepath: {}", fstr);
     if check_for_stdin(fstr, opt) {
         return Ok(());
     }
@@ -45,7 +46,7 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
         let stat = f.metadata()?;
         if stat.is_dir() {
             let dir: ReadDir = read_dir(fpath)?;
-            let wrapped_dir = util::WrappedDir {path: fpath, dir: &dir};
+            let wrapped_dir = util::WrappedDir {path: fpath, dir: dir};
             self::try_dir(wrapped_dir, opt)?;
         }
         else {
@@ -65,15 +66,38 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
                 Err(_) => return Err(std::io::Error::new(ErrorKind::InvalidData, ""))
             };
             let ofname_str: &str = (*ofname).to_str().unwrap();
-            println!("{}", ofname_str);
-            if !opt.decompress {
-                zip::into (&wrapped_file, ofname_str, opt.level.try_into().unwrap())?;
+            if file_would_replace(ofname_str) && !opt.force {
+                print!("{}: {} already exists; do you wish to overwrite (y or n)? ",
+                    constants::PROGRAM_NAME, ofname_str);
+                if util::yesno() {
+                    run_compression(&wrapped_file, ofname_str, opt)?;
+                }
+                else {
+                    println!("\tnot overwritten");
+                }
             }
             else {
-                unzip::into(&wrapped_file, ofname_str)?;
+                run_compression(&wrapped_file, ofname_str, opt)?;
             }
         }
         Ok(())
+    }
+}
+
+fn run_compression (file: &util::WrappedFile, ofname_str: &str, opt: &Opt) -> std::io::Result<()> {
+    if !opt.decompress {
+        zip::into (&file, ofname_str, opt.level.try_into().unwrap())
+    }
+    else {
+        unzip::into(&file, ofname_str)
+    }
+}
+
+fn file_would_replace (file_name: &str) -> bool {
+    let p: &Path = Path::new(file_name);
+    match metadata(p) {
+        Ok(_) => true,
+        Err(e) => if e.kind() == ErrorKind::AlreadyExists {true} else {false}
     }
 }
 
@@ -96,12 +120,24 @@ fn try_dir (dir: util::WrappedDir, opt: &mut Opt) -> std::io::Result<()> {
         self::dir(dir.dir, opt);
     }
     else{
-        println!("recursive not on");
-        warn!("{}: {:?}: is a directory -- ignored", constants::PROGRAM_NAME, dir.path; constants::WARNING);
+        let dir_name = dir.path.as_os_str().to_str().unwrap();
+        warn!("{}: {}: is a directory -- ignored", constants::PROGRAM_NAME, dir_name; constants::WARNING);
     }
     Ok (())
 }
 
-fn dir (_dir: &ReadDir, _opt: &mut Opt) {
-    unimplemented!();
+fn dir (dir: ReadDir, opt: &mut Opt) {
+    let files: Vec<PathBuf> = dir.filter_map(|f|{
+        match f {
+            Ok(dir_entry) => {
+                match dir_entry.file_type() {
+                    Ok(t) => if t.is_file() {Some(dir_entry.path())} else {None},
+                    Err(_) => None
+                }
+            },
+            Err(_) => None
+        }
+    }).collect();
+    println!("num files: {}", files.len());
+    self::files(files, opt);
 }
