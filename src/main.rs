@@ -8,6 +8,7 @@ mod constants;
 mod treat;
 mod util;
 mod zip;
+mod unzip;
 
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -105,8 +106,10 @@ impl Opt {
         }
         match check_if_suffix_too_long(&opt.suffix) {
             Some(_) => panic!("Suffix too long! Suffix must be under 30 characters"),
-            None => opt
+            None => ()
         }
+        opt.suffix = String::from(util::strip_leading_dot(opt.suffix.as_str()));
+        opt
     }
 }
 

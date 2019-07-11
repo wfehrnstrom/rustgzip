@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::ffi::OsStr;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -60,6 +59,8 @@ impl From<SystemTime> for Timespec {
     }
 }
 
+static KNOWN_SUFFIXES: [&str; 7] = [constants::DEFAULT_SUFFIX, "z", "taz", "tgz", "-gz", "-z", "_z"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +70,21 @@ mod tests {
         assert!(!bit_set(0b010, 0b100));
         assert!(!bit_set(0b110, 0b001));
         assert!(!bit_set(0b0, 0b0));
+    }
+
+    #[test]
+    fn strip_leading_dot_test(){
+        assert_eq!(strip_leading_dot(".gz"), "gz");
+        assert_eq!(strip_leading_dot(".txt.gz"), "txt.gz");
+        assert_eq!(strip_leading_dot("gz"), "gz");
+        assert_eq!(strip_leading_dot("g.z"), "g.z");
+    }
+
+    #[test]
+    fn suffix_known_test(){
+        assert!(suffix_known("gz"));
+        assert!(suffix_known("-z"));
+        assert!(!suffix_known("tz"));
     }
 }
 
@@ -152,65 +168,81 @@ pub fn get_input_size (stat: &fs::Metadata) -> u64 {
 
 // A result of Error indicates that the file must be skipped
 pub fn make_ofname (f: &PathBuf, opt: &Opt) -> Result<Box<PathBuf>, ()> {
-    // TODO: Replicate true behavior of get_suffix, which is too confusing to follow
-    let ofname = f;
-    let suffix = get_suffix (f, opt);
-    match suffix {
+    match get_suffix (f, opt) {
         Some(suffix) => {
-            // convert .tgz and .taz to .tar
-            println!("got suffix: {}", suffix);
-            return Ok(Box::new(ofname.with_extension(OsStr::new(suffix.as_str()))));
+            let path_str = f.to_str().unwrap();
+            if opt.decompress {
+                // strip known extension off of end of file
+                println!("suffix: {}", suffix);
+                let res: Vec<&str> = path_str.rsplit('.').skip(1).collect();
+                let res: Vec<&str> = res.iter().rev().map(|&x| x).collect();
+                let res: String = res.join(".");
+                Ok(Box::new(PathBuf::from(res)))
+            }
+            else {
+                // add known extension at end of file
+                let res = format!("{}.{}", path_str, suffix);
+                println!("res: {}", res);
+                Ok(Box::new(PathBuf::from(res)))
+            }
         },
-        None => {
-            // when in test or list mode and not recursive, we don't care about having a suffix
-            if !opt.recursive && (opt.list || opt.test) {
-                return Ok(Box::new(ofname.to_path_buf()));
-            }
-            if (opt.verbose > 0) || !opt.recursive {
-                warn! ("{}: {}: unknown suffix -- ignored", constants::PROGRAM_NAME,
-                    f.file_name().unwrap().to_str().unwrap(); constants::WARNING);
-                return Err(());
-            }
-            // if we're compressing, the file we're compressing shouldn't already have a compress
-            // extension
-            if !opt.decompress && !opt.force {
-                if (opt.verbose > 0) && (!opt.recursive || !opt.quiet) {
-                    // do not affect exit code here
-                    eprintln! ("{}: {} already has suffix -- unchanged",
-                        constants::PROGRAM_NAME, f.file_name().unwrap().to_str().unwrap())
-                }
-                return Err(());
-            }
-        }
+        None => Err(())
     }
-    Ok(Box::new(ofname.with_extension(OsStr::new(opt.suffix.as_str()))))
 }
 
+/// Returns the very last portion of the filename (after the last '.'), or None if there was an error
 fn get_suffix (p: &PathBuf, opt: &Opt) -> Option<String> {
     if opt.decompress {
-        let known_suffixes = vec!(".gz", ".z", ".taz", ".tgz", "-gz", "-z", "_z");
-        let ext = match p.extension () {
-            Some(e) => e,
-            None => OsStr::new("")
-        };
-        let ext_str = ext.to_str().unwrap();
-        // if extension is of the form .??z and we are on a unix system, return default suffix
-        if cfg!(unix) && ext.len() == 3 && ext_str.get(2..) == Some("z") {
-            eprintln!("{}: extensions of the form .??z are disallowed on unix-based systems.\n\
-            reverting to {}",
-                constants::PROGRAM_NAME, constants::DEFAULT_SUFFIX);
-            return Some(String::from(constants::DEFAULT_SUFFIX));
+        // if the suffix given through the CLI is empty, this means that we MUST try to decompress
+        // with whatever suffix is at the end of the file (if any).
+        match p.extension() {
+            Some(os_str) => {
+                let suffix = strip_leading_dot(os_str.to_str().unwrap());
+                println!("inside get_suffix: {}", suffix);
+                if opt.suffix.is_empty () || suffix_known(suffix) {
+                    return Some(String::from(suffix));
+                }
+                return None;
+            },
+            None => {
+                if opt.suffix.is_empty () {
+                    return Some(String::from (""));
+                }
+                return None;
+            }
         }
-        // if suffix given in --suffix is allowable
-        if known_suffixes.contains(&ext_str) {
-            return Some(String::from(ext_str));
-        }
-        return None;
     }
     else {
-        match p.extension () {
-            Some(_) => return None,
-            None => return Some(String::from(opt.suffix.as_str()))
+        let has_compression_suffix = match p.extension() {
+            Some(os_str) => {
+                let suffix = strip_leading_dot(os_str.to_str().unwrap());
+                suffix_known (suffix)
+            }
+            None => false
+        };
+        if has_compression_suffix && !opt.force {
+            let suffix = p.extension().unwrap().to_str().unwrap();
+            let file_name = match p.file_name() {
+                Some(name) => name.to_str().unwrap(),
+                None => ""
+            };
+            eprintln!("{}: {} already has .{} suffix -- unchanged", constants::PROGRAM_NAME,
+                file_name, suffix);
+            return None;
+        }
+        return Some(String::from(&opt.suffix));
+    }
+}
+
+fn suffix_known (suffix: &str) -> bool {
+    return KNOWN_SUFFIXES.contains (&suffix);
+}
+
+pub fn strip_leading_dot (suff: &str) -> &str {
+    if let Some(first_char) = suff.chars().next() {
+        if first_char == '.' {
+            return &suff [1..];
         }
     }
+    return suff;
 }

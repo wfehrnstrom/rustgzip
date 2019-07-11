@@ -1,10 +1,12 @@
 use std::path::{PathBuf, Path};
 use std::fs::{File, read_dir, ReadDir};
 use std::io::{Error, ErrorKind};
+use std::convert::TryInto;
 use crate::{Opt, EXIT_CODE};
 use crate::warn;
 use crate::util;
 use crate::zip;
+use crate::unzip;
 
 use crate::constants;
 
@@ -52,18 +54,24 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
                 return Err(Error::new(ErrorKind::InvalidData, ""));
             }
             // if this fails, we must have something that isn't a regular file
-            let mtime = match util::get_input_time(&stat) {
+            let _mtime = match util::get_input_time(&stat) {
                 Ok(mtime) => mtime,
                 Err(_) => return Err(Error::new(ErrorKind::InvalidData, ""))
             };
-            let size = util::get_input_size(&stat);
-            let part_nb = 0;
+            let _size = util::get_input_size(&stat);
+            let _part_nb = 0;
             let ofname = match util::make_ofname(&filepath, opt) {
                 Ok(boxed_path_buf) => boxed_path_buf,
                 Err(_) => return Err(std::io::Error::new(ErrorKind::InvalidData, ""))
             };
             let ofname_str: &str = (*ofname).to_str().unwrap();
-            zip::into (&wrapped_file, ofname_str)?;
+            println!("{}", ofname_str);
+            if !opt.decompress {
+                zip::into (&wrapped_file, ofname_str, opt.level.try_into().unwrap())?;
+            }
+            else {
+                unzip::into(&wrapped_file, ofname_str)?;
+            }
         }
         Ok(())
     }
