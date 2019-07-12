@@ -1,15 +1,13 @@
-use std::fs::{read, File};
-use std::io::Write;
-use crate::util::WrappedFile;
+use std::io::{Read, Write};
 use flate2::{Compression, GzBuilder};
 
-pub fn into (input_file: &WrappedFile, ofname: &str, level: u32) -> std::io::Result<()> {
-    let bytes_read = read (input_file.path)?;
-    let output_file = File::create (ofname)?;
+pub fn from<R: Read> (mut input: R, level: u32) -> std::io::Result<Vec<u8>> {
+    let mut inbuf: Vec<u8> = Vec::new();
+    let outbuf: Vec<u8> = Vec::new();
+    input.read_to_end(&mut inbuf)?;
     let mut gz = GzBuilder::new ()
-                    .filename (ofname)
-                    .write (output_file, Compression::new(level));
-    gz.write_all(bytes_read.as_slice())?;
-    gz.finish()?;
-    return Ok(());
+                    .write (outbuf, Compression::new(level));
+    gz.write_all(inbuf.as_slice())?;
+    let outbuf = gz.finish()?;
+    return Ok(outbuf);
 }

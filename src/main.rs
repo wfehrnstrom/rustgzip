@@ -104,6 +104,10 @@ impl Opt {
             opt.no_name = opt.decompress;
             opt.no_time = opt.decompress;
         }
+        // Default to stdin
+        if opt.files.is_empty() {
+            opt.files = vec!(PathBuf::from("-"));
+        }
         match check_if_suffix_too_long(&opt.suffix) {
             Some(_) => panic!("Suffix too long! Suffix must be under 30 characters"),
             None => ()
@@ -147,6 +151,9 @@ fn main() {
         print_license ();
     }
     let files = opt.files.clone();
+    if files.is_empty (){
+        treat::stdin (&mut opt);
+    }
     treat::files(files, &mut opt);
     // println!("{:?}", opt);
 }

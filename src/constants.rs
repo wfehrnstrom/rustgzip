@@ -1,5 +1,5 @@
 pub const DEFAULT_LEVEL: i8 = 6;
-pub const PROGRAM_NAME: &str = "gzip";
+pub const PROGRAM_NAME: &str = "rstzip";
 pub const MAX_SUFFIX: usize = 30;
 pub const DEFAULT_SUFFIX: &str = "gz";
 
@@ -11,3 +11,4 @@ pub const S_ISVTX: u32 = 01000;
 // Status codes
 // pub const OK: i8 = 0;
 pub const WARNING: i8 = 2;
+pub const ERROR: i32 = 1;

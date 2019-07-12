@@ -10,3 +10,4 @@ structopt = "0.2.18"
 libc = "0.2"
 num = "0.2"
 flate2 = { version = "^1.0", features = ["zlib"], default-features = false }
+atty = "0.2"

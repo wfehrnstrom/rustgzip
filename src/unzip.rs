@@ -1,15 +1,9 @@
-use crate::util::WrappedFile;
-use std::io::{Read, Write};
-use std::fs::File;
+use std::io::Read;
 use flate2::read::GzDecoder;
 
-pub fn into(input_file: &WrappedFile, ofname: &str) -> std::io::Result<()>{
-    println!("decompressing: {}", ofname);
-    let input_file = input_file.file;
-    let mut output_file = File::create (ofname)?;
-    let mut gz = GzDecoder::new (input_file);
-    let mut buf = String::new ();
-    gz.read_to_string(&mut buf)?;
-    output_file.write_all (buf.as_bytes())?;
-    return Ok(());
+pub fn from<R: Read>(input: R) -> std::io::Result<Vec<u8>>{
+    let mut outbuf: Vec<u8> = Vec::new();
+    let mut gz = GzDecoder::new (input);
+    gz.read_to_end(&mut outbuf)?;
+    return Ok(outbuf);
 }
