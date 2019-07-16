@@ -49,7 +49,7 @@ pub struct Opt {
     suffix: String,
     #[structopt(short, long, help="test compressed file integrity")]
     test: bool,
-    #[structopt(short, long, help="verbose mode", default_value="0")]
+    #[structopt(short="v", long, help="verbose mode", default_value="0")]
     verbose: u8,
     #[structopt(short="1", long, help="compress faster, but worse", conflicts_with="best")]
     fast: bool,
@@ -69,7 +69,7 @@ pub struct Opt {
 
 // TODO: make no_name and name exclusive arguments (e.g. cannot be passed together)
 impl Opt {
-    /// will panic on being passed a suffix via --suffix greater than 30 characters
+    /// will error on being passed a suffix via --suffix greater than 30 characters
     /// checks to ensure that all command line arguments are consistent (e.g. quiet and verbose
     /// are not present at the same time). The following rules apply:
     ///     if --quiet is passed, --verbose is coerced to false/0

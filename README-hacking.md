@@ -3,6 +3,12 @@
 This is intended as both a guide to the architecture of gzip in rust and a
 indication of what has been done in the port so far.
 
+## Building rstzip
+
+From within the rstzip directory, run `cargo build`
+The built binary should be located at `target/debug`
+Invocation can be done as specified in the README
+
 ## Options Partially or Wholly implemented
 
 gzip
@@ -21,6 +27,9 @@ gzip
   --version, -V
   --fast
   --best
+  --no-name, -n
+  --name, -N
+  
   but instead of -[n], this gzip has a flag --level [LVL]
   This will be removed in the future, and -[n] added.
 
@@ -33,7 +42,5 @@ gzip file.
 
 gzip
 
-  --no-name, -n
-  --name, -N
   --rsyncable
   --synchronous

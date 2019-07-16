@@ -2,8 +2,14 @@ This is a port of gzip using rust instead of C internally. Every effort is made
 to maintain full compatibility with GNU gzip in the hopes that this will become
 the new official distributed gzip.
 
+To build this distribution, please see README-hacking.
+
+This gzip implementation currently is different from GNU gzip in that
+it is invoked as rstzip [all flags] -- [positional args]. That is, '--' must be
+present when invoking rstzip.
+
 Much thanks to Jean-loup Gailly, Paul Eggert, Jim Meyering, and all other
-crucial maintainers of gzip. The full GNU gzip README follows unaltered.
+maintainers and contributors to gzip. The full GNU gzip README follows unaltered.
 
 ================================================================================
 
