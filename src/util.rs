@@ -1,7 +1,9 @@
+use std::fs::File;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::io::{ErrorKind, Write};
 use std::io;
-use std::io::Write;
+use crate::treat::errors;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -17,23 +19,51 @@ use std::convert::TryInto;
 
 use num::Integer;
 
+/// Convenience struct created to encapsulate both the location of a directory
+/// as well as the directory itself
 pub struct WrappedDir<'a> {
     pub path: &'a Path,
     pub dir: fs::ReadDir
 }
 
+/// Convenience struct created to encapsulate both the location of a file
+/// as well as the file itself
 pub struct WrappedFile<'a, 'b> {
     pub path: &'a Path,
     pub file: &'b fs::File,
 }
 
+pub struct WorkData {
+    pub orig_name: Option<String>,
+    pub mtime: Option<Timespec>,
+    pub ofname: String
+}
+
+impl WorkData {
+    pub fn new (orig_name: Option<String>, time: Option<Timespec>, ofname: String, opt: &Opt) -> Self {
+        let mtime;
+        // we might be restoring mtime on gunzipping, but we won't be using the mtime from work
+        // data, we'll be using the mtime, if any, stored in the compressed file
+        if opt.decompress {
+            mtime = None
+        }
+        else{
+            mtime = time
+        }
+        WorkData {orig_name, mtime, ofname}
+    }
+}
+
+/// Timespec is (i64, i32) because it must represent negative numbers on no timestamp being
+/// recoverable
+#[derive(Debug, Copy, Clone)]
 pub struct Timespec (i64, i32);
 
 impl From<Duration> for Timespec  {
     fn from (d: Duration) -> Self {
         let mut secs;
         let nsecs;
-        if d.as_secs() > i64::max_value().try_into().unwrap() {
+        if d.as_secs() > i32::max_value().try_into().unwrap() {
             secs = i64::max_value ();
             nsecs = i32::max_value ();
         }
@@ -51,45 +81,33 @@ impl From<Duration> for Timespec  {
     }
 }
 
+impl From<u32> for Timespec {
+    fn from (secs: u32) -> Self {
+        let secs: i64 = secs.into();
+        let nanosecs: i32 = 0;
+        return Timespec (secs, nanosecs);
+    }
+}
+
+impl TryInto<u32> for Timespec{
+    type Error = std::num::TryFromIntError;
+    fn try_into (self) -> Result<u32, Self::Error> {
+        return self.0.try_into();
+    }
+}
+
 impl From<SystemTime> for Timespec {
     fn from (s: SystemTime) -> Self {
-        let d = match s.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(dur) => dur,
+        match s.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(dur) => return Timespec::from(dur),
             Err(_) => return Timespec (-1, -1)
-        };
-        return Timespec::from(d);
+        }
     }
 }
 
 static KNOWN_SUFFIXES: [&str; 7] = [constants::DEFAULT_SUFFIX, "z", "taz", "tgz", "-gz", "-z", "_z"];
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn bit_set_test(){
-        assert!(bit_set(0b100, 0b100));
-        assert!(!bit_set(0b010, 0b100));
-        assert!(!bit_set(0b110, 0b001));
-        assert!(!bit_set(0b0, 0b0));
-    }
-
-    #[test]
-    fn strip_leading_dot_test(){
-        assert_eq!(strip_leading_dot(".gz"), "gz");
-        assert_eq!(strip_leading_dot(".txt.gz"), "txt.gz");
-        assert_eq!(strip_leading_dot("gz"), "gz");
-        assert_eq!(strip_leading_dot("g.z"), "g.z");
-    }
-
-    #[test]
-    fn suffix_known_test(){
-        assert!(suffix_known("gz"));
-        assert!(suffix_known("-z"));
-        assert!(!suffix_known("tz"));
-    }
-}
-
+/// checks if anded together, the two types yield a non-zero value
 pub fn bit_set<T: Integer + std::ops::BitAnd + PartialEq> (b1: T, b2: T) -> bool
 where
     T: std::ops::BitAnd<Output = T>{
@@ -115,9 +133,8 @@ pub fn check_file_modes (f: &WrappedFile, opt: &mut Opt) -> std::io::Result<bool
                 constants::PROGRAM_NAME, f.path.to_str().unwrap(); constants::WARNING);
             return Ok(false)
         }
-        let unix_checks = cfg!(unix) || unix_file_checks(f, opt)?;
-        // TODO: CHECK LINUX AND OTHERS
-        if unix_checks {
+        let file_checks = (!cfg!(unix) && !cfg!(linux)) || file_checks(f, opt)?;
+        if file_checks {
             return Ok(true);
         }
         return Ok(false);
@@ -125,10 +142,11 @@ pub fn check_file_modes (f: &WrappedFile, opt: &mut Opt) -> std::io::Result<bool
     Ok(true)
 }
 
-#[cfg(unix)]
-fn unix_file_checks (f: &WrappedFile, opt: &Opt) -> std::io::Result<bool> {
+// TODO: Support linux
+fn file_checks (f: &WrappedFile, opt: &Opt) -> std::io::Result<bool> {
     let meta = f.file.metadata()?;
     let mode = meta.mode();
+
     let path_str = f.path.to_str().unwrap();
 
     if bit_set (mode, constants::S_ISUID) {
@@ -164,7 +182,7 @@ pub fn get_input_time (stat: &fs::Metadata) -> std::io::Result<Timespec> {
     return Err(std::io::Error::new(std::io::ErrorKind::Other, "Input given is not a file"));
 }
 
-pub fn get_input_size (stat: &fs::Metadata) -> u64 {
+pub fn _get_input_size (stat: &fs::Metadata) -> u64 {
     return stat.len();
 }
 
@@ -183,7 +201,6 @@ pub fn make_ofname (f: &PathBuf, opt: &Opt) -> Result<Box<PathBuf>, ()> {
             else {
                 // add known extension at end of file
                 let res = format!("{}.{}", path_str, suffix);
-                println!("res: {}", res);
                 Ok(Box::new(PathBuf::from(res)))
             }
         },
@@ -237,6 +254,22 @@ fn suffix_known (suffix: &str) -> bool {
     return KNOWN_SUFFIXES.contains (&suffix);
 }
 
+pub fn file_open (fpath: &PathBuf) -> std::io::Result<File> {
+    let fstr = fpath.to_str().unwrap();
+    match File::open(fpath) {
+        Ok(file) => Ok(file),
+        Err(e) => {
+            match e.kind() {
+                ErrorKind::NotFound => eprintln!("{}: {}: No such file or directory", constants::PROGRAM_NAME, fstr),
+                ErrorKind::PermissionDenied => eprintln!("{}: {}: permission denied",
+                    constants::PROGRAM_NAME, fstr),
+                _ => errors::permission_denied_err_msg(fstr, "open")
+            }
+            return Err(e);
+        }
+    }
+}
+
 fn get_file_name (p: &PathBuf) -> &str {
     match p.file_name() {
         Some(name) => name.to_str().unwrap(),
@@ -271,5 +304,46 @@ pub fn yesno () -> bool {
             }
         },
         Err(_) => false
+    }
+}
+
+/// 'from' must store its bytes in little endian ordering for its representations
+/// to be correct
+pub fn shift_left (num_bytes: usize, from: &[u8]) -> u32 {
+    if num_bytes > from.len() {
+        return 0;
+    }
+    let mut res: u32 = 0;
+    for i in 0..num_bytes {
+        let byte: u32 = from[i].into();
+        res = res | (byte << (i * 8));
+    }
+    return res;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bit_set_test(){
+        assert!(bit_set(0b100, 0b100));
+        assert!(!bit_set(0b010, 0b100));
+        assert!(!bit_set(0b110, 0b001));
+        assert!(!bit_set(0b0, 0b0));
+    }
+
+    #[test]
+    fn strip_leading_dot_test(){
+        assert_eq!(strip_leading_dot(".gz"), "gz");
+        assert_eq!(strip_leading_dot(".txt.gz"), "txt.gz");
+        assert_eq!(strip_leading_dot("gz"), "gz");
+        assert_eq!(strip_leading_dot("g.z"), "g.z");
+    }
+
+    #[test]
+    fn suffix_known_test(){
+        assert!(suffix_known("gz"));
+        assert!(suffix_known("-z"));
+        assert!(!suffix_known("tz"));
     }
 }

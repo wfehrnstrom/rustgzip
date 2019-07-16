@@ -1,0 +1,3 @@
+7/15/19 - Noticed possible discrepancy in reference implementation of GNU gzip
+where even on being forced to decompress, gzip failed to do so with the options -dNf
+To my knowledge gzip should always attempt to decompress when -f is passed.

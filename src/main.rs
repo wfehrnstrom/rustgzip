@@ -9,20 +9,23 @@ mod treat;
 mod util;
 mod zip;
 mod unzip;
+mod list;
 
 use std::path::PathBuf;
 use structopt::StructOpt;
+use std::process::exit;
 
 static mut EXIT_CODE: i8 = 0;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "rustzip", about="GNU gzip ported to Rust; aka rustzip.", author="Will Fehrnstrom, wfehrnstrom@gmail.com")]
+/// Opt is used to store all the arguments passed through the command line
 pub struct Opt {
     #[structopt(short="a", long, help="ascii text; convert end-of-line using local conventions")]
     ascii: bool,
-    #[structopt(short="c", long, help="write on standard output, keep original files unchanged")]
+    #[structopt(short="c", long, alias="to-stdout", help="write on standard output, keep original files unchanged")]
     stdout: bool,
-    #[structopt(short, long, help="decompress")]
+    #[structopt(short, long, alias="uncompress", help="decompress")]
     decompress: bool,
     #[structopt(short, long, help="force overwrite of output file and compress links")]
     force: bool,
@@ -64,8 +67,17 @@ pub struct Opt {
     files: Vec<PathBuf>
 }
 
+// TODO: make no_name and name exclusive arguments (e.g. cannot be passed together)
 impl Opt {
-    #[doc = "new () will panic on being passed a suffix via --suffix greater than 30 characters"]
+    /// will panic on being passed a suffix via --suffix greater than 30 characters
+    /// checks to ensure that all command line arguments are consistent (e.g. quiet and verbose
+    /// are not present at the same time). The following rules apply:
+    ///     if --quiet is passed, --verbose is coerced to false/0
+    ///     if --list is passed, we are getting statistics on compressed files. Therefore we are
+    ///         decompressing.
+    ///     if we are not restoring the name, we must also not be restoring the time
+    ///     if we are testing a compressed file, we decompress, and we output to stdout
+    ///     --ascii should only be present on windows systems
     fn new () -> Self {
         let mut opt = Opt::from_args();
         if opt.quiet {
@@ -89,7 +101,7 @@ impl Opt {
         }
         if ! cfg!(target_os = "windows") {
             if opt.ascii && !opt.quiet {
-                println!("{}: option --ascii ignored on this system", constants::PROGRAM_NAME);
+                eprintln!("{}: option --ascii ignored on this system", constants::PROGRAM_NAME);
             }
             opt.ascii = false;
         }
@@ -109,7 +121,10 @@ impl Opt {
             opt.files = vec!(PathBuf::from("-"));
         }
         match check_if_suffix_too_long(&opt.suffix) {
-            Some(_) => panic!("Suffix too long! Suffix must be under 30 characters"),
+            Some(_) => {
+                eprintln!("{}: invalid suffix '{}'", constants::PROGRAM_NAME, opt.suffix);
+                exit(constants::ERROR);
+            },
             None => ()
         }
         opt.suffix = String::from(util::strip_leading_dot(opt.suffix.as_str()));
@@ -151,9 +166,16 @@ fn main() {
         print_license ();
     }
     let files = opt.files.clone();
-    if files.is_empty (){
-        treat::stdin (&mut opt);
+    if opt.list {
+        match list::do_list(files, &opt) {
+            Ok(_) => return,
+            Err(_) => exit(constants::ERROR)
+        }
     }
-    treat::files(files, &mut opt);
-    // println!("{:?}", opt);
+    else{
+        if files.is_empty (){
+            treat::stdin (&mut opt);
+        }
+        treat::files(files, &mut opt);
+    }
 }
