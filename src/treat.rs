@@ -2,16 +2,13 @@ use crate::util::{WrappedFile, WorkData};
 use std::path::{PathBuf, Path};
 use std::fs::{File, ReadDir, remove_file, read_dir, metadata};
 use std::io::{Read, Write, Error, ErrorKind};
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::time::SystemTime;
 use std::process::exit;
 use std::str::from_utf8;
-use crate::{Opt, EXIT_CODE};
-use crate::warn;
-use crate::util;
-use crate::zip;
-use crate::unzip;
-use crate::constants;
+use crate::{Opt, EXIT_CODE, warn, util, zip, unzip, constants};
+use crate::formats::gz::GzFile;
+use crate::formats::zip::Test;
 use flate2::{Compression, GzBuilder};
 use flate2::read::GzDecoder;
 
@@ -27,6 +24,19 @@ pub fn files (files: Vec<PathBuf>, opt: &mut Opt) {
 }
 
 pub fn stdin (opt: &mut Opt) {
+    check_for_tty(opt);
+
+    let work_data = WorkData {
+        mtime: None,
+        orig_name: None,
+        ofname: String::from("stdout")
+    };
+    if let Err(_) = work (std::io::stdin(), work_data, opt) {
+        exit (constants::ERROR);
+    }
+}
+
+fn check_for_tty (opt: &Opt) {
     let isatty = if opt.decompress {
         atty::is(atty::Stream::Stdin)
     }
@@ -37,14 +47,6 @@ pub fn stdin (opt: &mut Opt) {
         if !opt.quiet {
             errors::tty_err_msg(opt.decompress);
         }
-        exit (constants::ERROR);
-    }
-    let work_data = WorkData {
-        mtime: None,
-        orig_name: None,
-        ofname: String::from("stdout")
-    };
-    if let Err(_) = work (std::io::stdin(), work_data, opt) {
         exit (constants::ERROR);
     }
 }
@@ -118,10 +120,17 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
     }
 }
 
-fn work<R: Read> (input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Result<()> {
+fn work<R: Read> (mut input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Result<()> {
     let ofname_str = work_data.ofname;
     let mut name_from_compressed_file: Option<String> = None;
     let mut mtime_from_compressed_file: Option<u32> = None;
+    if opt.test {
+        let mut v: Vec<u8> = Vec::new();
+        input.read_to_end(&mut v)?;
+        let gz = GzFile::try_from(v)?;
+        gz.test(opt);
+        return Ok(())
+    }
     let output: Vec<u8> = if !opt.decompress {
         if opt.no_name || work_data.mtime.is_none() || work_data.orig_name.is_none() {
             zip::from (input, opt.level.try_into().unwrap())?

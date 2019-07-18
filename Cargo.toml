@@ -5,10 +5,10 @@ authors = ["Will Fehrnstrom <wfehrnstrom@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-clap = "^2.33.0"
 structopt = "0.2.18"
 libc = "0.2"
 num = "0.2"
 flate2 = { version = "^1.0", features = ["zlib"], default-features = false }
 atty = "0.2"
 utime = "0.2"
+chrono = "0.4"

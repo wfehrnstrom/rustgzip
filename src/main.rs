@@ -1,7 +1,5 @@
 extern crate libc;
 
-extern crate clap;
-
 extern crate structopt;
 
 mod constants;
@@ -10,6 +8,7 @@ mod util;
 mod zip;
 mod unzip;
 mod list;
+mod formats;
 
 use std::path::PathBuf;
 use structopt::StructOpt;

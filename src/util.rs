@@ -110,7 +110,8 @@ static KNOWN_SUFFIXES: [&str; 7] = [constants::DEFAULT_SUFFIX, "z", "taz", "tgz"
 /// checks if anded together, the two types yield a non-zero value
 pub fn bit_set<T: Integer + std::ops::BitAnd + PartialEq> (b1: T, b2: T) -> bool
 where
-    T: std::ops::BitAnd<Output = T>{
+    T: std::ops::BitAnd<Output = T>
+{
     let res: T = b1 & b2;
     return res != num::zero();
 }
@@ -319,6 +320,19 @@ pub fn shift_left (num_bytes: usize, from: &[u8]) -> u32 {
         res = res | (byte << (i * 8));
     }
     return res;
+}
+
+pub fn str_seek (start: usize, buf: &[u8]) -> Result<(&str, usize), ()> {
+    match buf.iter().skip(start).position(|&x| x == 0) {
+        Some(pos) => {
+            let slice: &[u8] = &buf[start..(start + pos+1)];
+            match std::str::from_utf8(slice) {
+                Ok(s) => Ok((s, pos+1)),
+                Err(_) => Err(())
+            }
+        },
+        None => Err(())
+    }
 }
 
 #[cfg(test)]
