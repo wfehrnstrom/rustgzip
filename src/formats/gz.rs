@@ -139,7 +139,7 @@ impl Zip for GzFile {
         let os = GzFile::os();
         let gz = match wdata {
             Some(wdata) => GzBuilder::new()
-                            .filename(wdata.orig_name.unwrap().as_str())
+                            .filename(wdata.orig_name.unwrap().trim_end_matches(char::from(0)))
                             .mtime(wdata.mtime.unwrap().try_into().unwrap())
                             .operating_system(os)
                             .write(Vec::new(), Compression::new(opt.level.try_into().unwrap())),

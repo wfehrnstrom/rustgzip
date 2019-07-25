@@ -86,15 +86,18 @@ pub trait List {
         {
         if opt.name {
             match stored_filename {
-                Some(s) => String::from(s),
+                Some(s) => {
+                    eprintln!("Some string: {}", s);
+                    String::from(s)
+                },
                 None => String::from("????")
             }
         }
         else {
              if let Some(p) = path {
                  let filename = match util::make_ofname(&p, opt) {
-                        Ok(boxed_path_buf) => boxed_path_buf,
-                        Err(_) => Box::new(PathBuf::from_str("????").unwrap())
+                    Ok(boxed_path_buf) => boxed_path_buf,
+                    Err(_) => Box::new(PathBuf::from_str("????").unwrap())
                  };
                  String::from((*filename).to_str().unwrap())
              }

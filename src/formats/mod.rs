@@ -17,7 +17,6 @@ pub fn parse_list (mut wf: WrappedFile) -> Box<dyn List> {
     let buf_len: usize = buf.len();
     let magic_portion = buf[0..4].to_vec();
     let path = wf.path;
-    let buf: Vec<u8> = Vec::new();
     // ... here read the file into the buf
     if GzFile::is_magic_num(&magic_portion) {
         if let Ok(f) = TryFrom::try_from(buf) {

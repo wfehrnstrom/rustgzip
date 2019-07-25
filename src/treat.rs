@@ -176,6 +176,9 @@ fn work<R: Read> (input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Resu
         let gz: GzFile = TryFromReadable::try_from(input)?;
         if !opt.no_name {
             name_from_compressed_file = gz.stored_filename.clone();
+            if name_from_compressed_file == None && opt.verbose > 1 {
+                eprintln!("{}: no name found within compressed file", constants::PROGRAM_NAME);
+            }
             mtime_from_compressed_file = Some(gz.mtime);
         }
         gz.decompress()?
@@ -196,8 +199,16 @@ fn work<R: Read> (input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Resu
         // if necessary
         else {
             if let Some(name) = name_from_compressed_file {
-                fname = name.clone();
-                File::create(name)?
+                let name = name.trim_end_matches(char::from(0));
+                fname = String::from(name);
+                match File::create(name) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        println!("{:?}", e);
+                        return Err(e);
+                    }
+                }
+                // TODO: we may actually overwrite a file on decompression too! Need to fix this
             }
             else{
                 File::create(ofname_str)?
