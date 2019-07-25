@@ -28,9 +28,16 @@ pub struct WrappedDir<'a> {
 
 /// Convenience struct created to encapsulate both the location of a file
 /// as well as the file itself
+#[derive(Copy)]
 pub struct WrappedFile<'a, 'b> {
     pub path: &'a Path,
     pub file: &'b fs::File,
+}
+
+impl <'a, 'b> Clone for WrappedFile<'a, 'b> {
+    fn clone(&self) -> Self {
+        WrappedFile { path: self.path, file: self.file.clone()}
+    }
 }
 
 pub struct WorkData {
@@ -57,7 +64,7 @@ impl WorkData {
 /// Timespec is (i64, i32) because it must represent negative numbers on no timestamp being
 /// recoverable
 #[derive(Debug, Copy, Clone)]
-pub struct Timespec (i64, i32);
+pub struct Timespec (pub i64, pub i32);
 
 impl From<Duration> for Timespec  {
     fn from (d: Duration) -> Self {
@@ -105,7 +112,7 @@ impl From<SystemTime> for Timespec {
     }
 }
 
-static KNOWN_SUFFIXES: [&str; 7] = [constants::DEFAULT_SUFFIX, "z", "taz", "tgz", "-gz", "-z", "_z"];
+static KNOWN_SUFFIXES: [&str; 8] = [constants::DEFAULT_SUFFIX, "z", "taz", "tgz", "-gz", "-z", "_z", "zip"];
 
 /// checks if anded together, the two types yield a non-zero value
 pub fn bit_set<T: Integer + std::ops::BitAnd + PartialEq> (b1: T, b2: T) -> bool
@@ -312,6 +319,7 @@ pub fn yesno () -> bool {
 /// to be correct
 pub fn shift_left (num_bytes: usize, from: &[u8]) -> u32 {
     if num_bytes > from.len() {
+        eprintln!("shift_left: value discarded due to range mismatch");
         return 0;
     }
     let mut res: u32 = 0;
@@ -333,6 +341,16 @@ pub fn str_seek (start: usize, buf: &[u8]) -> Result<(&str, usize), ()> {
         },
         None => Err(())
     }
+}
+
+pub fn get_str_if_set  (hpos: &mut usize, buf_slice: & [u8], cond: bool) -> Option<String> {
+    if cond {
+        if let Ok((s, pos)) = str_seek(*hpos, buf_slice) {
+            *hpos += pos;
+            return Some(String::from(s));
+        }
+    }
+    return None;
 }
 
 #[cfg(test)]

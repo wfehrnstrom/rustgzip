@@ -1,29 +1,35 @@
 use crate::util::{WrappedFile, WorkData};
 use std::path::{PathBuf, Path};
 use std::fs::{File, ReadDir, remove_file, read_dir, metadata};
-use std::io::{Read, Write, Error, ErrorKind};
-use std::convert::{TryInto, TryFrom};
+use std::io::{Read, Write, ErrorKind};
 use std::time::SystemTime;
 use std::process::exit;
-use std::str::from_utf8;
-use crate::{Opt, EXIT_CODE, warn, util, zip, unzip, constants};
+use crate::{Opt, EXIT_CODE, warn, util, constants};
 use crate::formats::gz::GzFile;
-use crate::formats::zip::Test;
-use flate2::{Compression, GzBuilder};
-use flate2::read::GzDecoder;
+use crate::formats::zip::{Test, Zip};
+use crate::formats::TryFromReadable;
 
 extern crate atty;
 
-pub fn files (files: Vec<PathBuf>, opt: &mut Opt) {
+pub fn files (files: Vec<PathBuf>, opt: &mut Opt) -> Result<(), i8> {
+    let mut exit_code: Result<(), i8> = Ok(());
     for file in files {
         match self::file (file, opt) {
             Ok(()) => continue,
-            Err(_) => continue
+            Err(i) => {
+                if i == constants::ERROR {
+                    return Err(constants::ERROR);
+                }
+                else{
+                    exit_code = Err(i);
+                }
+            }
         }
     }
+    exit_code
 }
 
-pub fn stdin (opt: &mut Opt) {
+pub fn stdin (opt: &mut Opt) -> Result<(), i8>{
     check_for_tty(opt);
 
     let work_data = WorkData {
@@ -32,8 +38,9 @@ pub fn stdin (opt: &mut Opt) {
         ofname: String::from("stdout")
     };
     if let Err(_) = work (std::io::stdin(), work_data, opt) {
-        exit (constants::ERROR);
+        return Err(constants::ERROR);
     }
+    return Ok(());
 }
 
 fn check_for_tty (opt: &Opt) {
@@ -47,63 +54,91 @@ fn check_for_tty (opt: &Opt) {
         if !opt.quiet {
             errors::tty_err_msg(opt.decompress);
         }
-        exit (constants::ERROR);
+        exit (constants::ERROR.into());
     }
 }
 
-fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
+fn file (filepath: PathBuf, opt: &mut Opt) -> Result<(), i8> {
     let fstr = match filepath.to_str() {
         Some(s) => s,
         None => {
             let msg = "file does not have valid unicode name";
             eprintln!("{}: {}", constants::PROGRAM_NAME, msg);
-            return Err(Error::new(ErrorKind::InvalidInput, msg))
+            return Err(constants::ERROR);
         }
     };
     if check_for_stdin(fstr) {
         let cflag = opt.stdout;
-        self::stdin(opt);
+        let exit = self::stdin(opt);
         opt.stdout = cflag;
-        return Ok(());
+        return exit;
     }
     else{
         let fpath: &Path = filepath.as_path();
-        let f = util::file_open (&filepath)?;
-        let stat = f.metadata()?;
+        let f = match util::file_open (&filepath) {
+            Ok(f) => f,
+            Err(_) => return Err(constants::ERROR)
+        };
+        let stat = match f.metadata() {
+            Ok(m) => m,
+            // TODO: should this actually return? Check gzip's behavior
+            Err(_) => return Err(constants::ERROR)
+        };
         if stat.is_dir() {
-            let dir: ReadDir = read_dir(fpath)?;
+            let dir: ReadDir = match read_dir(fpath) {
+                Ok(it) => it,
+                Err(_) => {
+                    if opt.verbose > 1 {
+                        eprintln!("{}: {}: internal error while reading directory",
+                            constants::PROGRAM_NAME, fstr);
+                    }
+                    return Err(constants::ERROR);
+                }
+            };
             let wrapped_dir = util::WrappedDir {path: fpath, dir: dir};
             self::try_dir(wrapped_dir, opt)?;
         }
         else {
             let wrapped_file = util::WrappedFile {path: fpath, file: &f};
             // if this fails, we must have something that isn't a regular file
-            if !util::check_file_modes(&wrapped_file, opt)? {
-                return Err(Error::new(ErrorKind::InvalidData, ""));
-            }
+            match util::check_file_modes(&wrapped_file, opt) {
+                Ok(b) => if !b {
+                    if opt.verbose > 1 {
+                        eprintln!("{}: {}: not a regular file", constants::PROGRAM_NAME, fstr);
+                    }
+                    return Err(constants::ERROR);
+                },
+                Err(_) => {
+                    if opt.verbose > 1 {
+                        eprintln!("{}: {}: unable to access file modes", constants::PROGRAM_NAME, fstr);
+                    }
 
-            // let _size = util::get_input_size(&stat);
+                }
+            }
 
             let ofname = match util::make_ofname(&filepath, opt) {
                 Ok(boxed_path_buf) => boxed_path_buf,
-                Err(_) => return Err(Error::new(ErrorKind::InvalidData, "Error constructing
-                    new output file name"))
+                Err(_) => return Err(constants::ERROR)
             };
 
             let ofname_str: &str = (*ofname).to_str().unwrap();
 
             let mtime = match util::get_input_time(&stat) {
                 Ok(mtime) => mtime,
-                Err(_) => return Err(Error::new(ErrorKind::InvalidData, ""))
+                Err(_) => return Err(constants::ERROR)
             };
 
             let work_data = WorkData::new (Some(String::from(fstr)), Some(mtime), String::from(ofname_str), opt);
 
             if file_would_replace(ofname_str) && !opt.force && !opt.stdout {
-                overwrite_prompt(&wrapped_file, work_data, opt)?;
+                if let Err(_) = overwrite_prompt(&wrapped_file, work_data, opt) {
+                    return Err(constants::ERROR);
+                }
             }
             else {
-                work(wrapped_file.file, work_data, opt)?;
+                if let Err(_) = work(wrapped_file.file, work_data, opt) {
+                    return Err(constants::ERROR);
+                }
             }
 
             // delete the file if necessary
@@ -120,44 +155,30 @@ fn file (filepath: PathBuf, opt: &mut Opt) -> std::io::Result<()> {
     }
 }
 
-fn work<R: Read> (mut input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Result<()> {
-    let ofname_str = work_data.ofname;
+fn work<R: Read> (input: R, work_data: WorkData, opt: &mut Opt) -> std::io::Result<()> {
+    let ofname_str = work_data.ofname.clone();
     let mut name_from_compressed_file: Option<String> = None;
     let mut mtime_from_compressed_file: Option<u32> = None;
     if opt.test {
-        let mut v: Vec<u8> = Vec::new();
-        input.read_to_end(&mut v)?;
-        let gz = GzFile::try_from(v)?;
+        let gz: GzFile = TryFromReadable::try_from(input)?;
         gz.test(opt);
         return Ok(())
     }
     let output: Vec<u8> = if !opt.decompress {
         if opt.no_name || work_data.mtime.is_none() || work_data.orig_name.is_none() {
-            zip::from (input, opt.level.try_into().unwrap())?
+            GzFile::compress(input, None, opt)?
         }
         else {
-            let gz = GzBuilder::new()
-                            .filename(work_data.orig_name.unwrap().as_str())
-                            .mtime(work_data.mtime.unwrap().try_into().unwrap())
-                            .write(Vec::new(), Compression::new(opt.level.try_into().unwrap()));
-            zip::from_encoder(input, gz)?
+            GzFile::compress(input, Some(work_data), opt)?
         }
     }
     else {
-        if opt.no_name {
-            unzip::from(input)?
+        let gz: GzFile = TryFromReadable::try_from(input)?;
+        if !opt.no_name {
+            name_from_compressed_file = gz.stored_filename.clone();
+            mtime_from_compressed_file = Some(gz.mtime);
         }
-        else {
-            let gz = GzDecoder::new (input);
-            let gz_header = gz.header();
-            if let Some(h) = gz_header {
-                if let Some(filename) = h.filename() {
-                    name_from_compressed_file = Some(String::from(from_utf8(filename).unwrap()));
-                }
-                mtime_from_compressed_file = Some(h.mtime());
-            }
-            unzip::from_decoder(gz)?
-        }
+        gz.decompress()?
     };
 
     if opt.stdout || ofname_str == "stdout" {
@@ -222,18 +243,18 @@ fn check_for_stdin (fstr: &str) -> bool {
     return false;
 }
 
-fn try_dir (dir: util::WrappedDir, opt: &mut Opt) -> std::io::Result<()> {
+fn try_dir (dir: util::WrappedDir, opt: &mut Opt) -> Result<(), i8> {
     if opt.recursive {
-        self::dir(dir.dir, opt);
+        return self::dir(dir.dir, opt)
     }
     else{
         let dir_name = dir.path.as_os_str().to_str().unwrap();
         warn!("{}: {}: is a directory -- ignored", constants::PROGRAM_NAME, dir_name; constants::WARNING);
+        return Err(constants::WARNING)
     }
-    Ok (())
 }
 
-fn dir (dir: ReadDir, opt: &mut Opt) {
+fn dir (dir: ReadDir, opt: &mut Opt) -> Result<(), i8> {
     let files: Vec<PathBuf> = dir.filter_map(|f|{
         match f {
             Ok(dir_entry) => {
@@ -245,7 +266,7 @@ fn dir (dir: ReadDir, opt: &mut Opt) {
             Err(_) => None
         }
     }).collect();
-    self::files(files, opt);
+    return self::files(files, opt);
 }
 
 pub mod errors {
@@ -276,5 +297,15 @@ pub mod errors {
 		  Use -f to force {2}compression.\n\
 		  For help, type: {0} -h", super::constants::PROGRAM_NAME,
             readwrite, de);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_check_for_stdin () {
+        assert!(check_for_stdin("-"));
+        assert_eq!(check_for_stdin("_"), false);
     }
 }

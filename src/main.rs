@@ -1,12 +1,10 @@
 extern crate libc;
-
 extern crate structopt;
 
 mod constants;
 mod treat;
 mod util;
 mod zip;
-mod unzip;
 mod list;
 mod formats;
 
@@ -122,7 +120,7 @@ impl Opt {
         match check_if_suffix_too_long(&opt.suffix) {
             Some(_) => {
                 eprintln!("{}: invalid suffix '{}'", constants::PROGRAM_NAME, opt.suffix);
-                exit(constants::ERROR);
+                exit(constants::ERROR.into());
             },
             None => ()
         }
@@ -160,6 +158,11 @@ fn print_license () {
 }
 
 fn main() {
+    let exit_code: i8 = main_helper ();
+    std::process::exit(exit_code.into());
+}
+
+fn main_helper () -> i8 {
     let mut opt = Opt::new();
     if opt.license {
         print_license ();
@@ -167,14 +170,20 @@ fn main() {
     let files = opt.files.clone();
     if opt.list {
         match list::do_list(files, &opt) {
-            Ok(_) => return,
-            Err(_) => exit(constants::ERROR)
+            Ok(_) => return constants::OK,
+            Err(code) => return code
         }
     }
     else{
-        if files.is_empty (){
-            treat::stdin (&mut opt);
+        let exit_code = if files.is_empty (){
+            treat::stdin (&mut opt)
         }
-        treat::files(files, &mut opt);
+        else{
+            treat::files(files, &mut opt)
+        };
+        match exit_code {
+            Ok(_) => constants::OK,
+            Err(code) => code
+        }
     }
 }

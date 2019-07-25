@@ -29,14 +29,13 @@ gzip
   --best
   --no-name, -n
   --name, -N
-  
+
   but instead of -[n], this gzip has a flag --level [LVL]
   This will be removed in the future, and -[n] added.
 
 ## Options remaining to be implemented
 
-Currently compressing to and decompressing from multipart gzip files is not
-implemented. Also not implemented is the ability to pass multiple gzip streams
+Currently not implemented is the ability to pass multiple gzip streams
 through stdin, have them all compressed together and outputted as a multipart
 gzip file.
 

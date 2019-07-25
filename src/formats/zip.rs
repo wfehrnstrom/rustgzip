@@ -1,3 +1,4 @@
+use crate::util::WorkData;
 use std::io::Read;
 use crate::Opt;
 use chrono::DateTime;
@@ -5,15 +6,15 @@ use chrono::offset::{Local, TimeZone};
 
 pub trait Zip {
     fn decompress (self) -> Result<Vec<u8>, std::io::Error>;
-    fn compress <R: Read> (input: R, opt: &Opt) -> Result<Vec<u8>, std::io::Error>;
-    fn compress_into <R: Read> (input: R, opt: &Opt) -> Result<Box<Self>, std::io::Error>;
+    fn compress <R: Read> (input: R, wdata: Option<WorkData>, opt: &Opt) -> Result<Vec<u8>, std::io::Error>;
+    fn compress_into <R: Read> (input: R, wdata: Option<WorkData>, opt: &Opt) -> Result<Box<Self>, std::io::Error>;
 }
 
 pub trait Test {
     fn test (self, opt: &Opt) -> bool;
 }
 
-struct StreamHeader {
+pub struct StreamHeader {
     magic: Vec<u8>,
     orig_filename: String,
     crc32: u32,

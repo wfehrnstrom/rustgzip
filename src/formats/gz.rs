@@ -1,21 +1,23 @@
+use crate::util::WorkData;
 use crate::formats::zip::Test;
 use crate::formats::list::List;
 use crate::formats::zip::Zip;
 use std::path::PathBuf;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::io::{Error, ErrorKind, Read, Write};
-use crate::{util, Opt, zip, unzip};
-use std::convert::TryInto;
-use chrono::{DateTime, Datelike, Timelike};
+use crate::{util, Opt, zip};
+use chrono::DateTime;
 use chrono::offset::{Local, TimeZone};
 use crate::util::WrappedFile;
-use std::str::FromStr;
+use flate2::{GzBuilder, Compression};
+use flate2::read::MultiGzDecoder;
 
+#[derive(Debug)]
 pub struct GzFile {
     pub path: Option<PathBuf>,
     compression_method: u8,
-    mtime: u32,
-    stored_filename: Option<String>,
+    pub mtime: u32,
+    pub stored_filename: Option<String>,
     flag: GzFlags,
     comment: Option<String>,
     os: u8,
@@ -27,6 +29,7 @@ pub struct GzFile {
     raw: Vec<u8>
 }
 
+#[derive(Debug)]
 struct GzFlags {
     pub ftext: bool,
     pub fhcrc: bool,
@@ -41,7 +44,8 @@ impl TryFrom<Vec<u8>> for GzFile {
         if buf.len() < GzFile::HEADER_SIZE_USIZE {
             return Err(Error::new(ErrorKind::InvalidInput, "invalid compressed file size"));
         }
-        if buf[0] != 31 || buf[1] != 139 {
+        if !Self::is_magic_num(&buf[0..2]) {
+            println!("uh oh, not a .gz-file");
             return Err(Error::new(ErrorKind::InvalidInput, "invalid compressed file type"));
         }
 
@@ -49,7 +53,7 @@ impl TryFrom<Vec<u8>> for GzFile {
         let flag = buf[3];
         let mtime: u32 = util::shift_left(4, &buf[4..8]);
         let os = buf[9];
-        let flag = parse_flags(flag);
+        let flag = GzFile::parse_flags(flag);
         let mut pos: usize = 10;
         let mut xfield = None;
         let mut hcrc16: Option<u16> = None;
@@ -64,8 +68,8 @@ impl TryFrom<Vec<u8>> for GzFile {
             xfield = Some((extra_field_size, extra_field.to_vec()));
         }
 
-        let stored_filename = get_str_if_set(&mut pos, buf.as_slice(), flag.fname);
-        let comment = get_str_if_set(&mut pos, buf.as_slice(), flag.fcomment);
+        let stored_filename = util::get_str_if_set(&mut pos, buf.as_slice(), flag.fname);
+        let comment = util::get_str_if_set(&mut pos, buf.as_slice(), flag.fcomment);
 
         if flag.fhcrc {
             hcrc16 = Some(util::shift_left(2, &buf[pos..pos+2]).try_into().unwrap());
@@ -96,117 +100,127 @@ impl TryFrom<Vec<u8>> for GzFile {
     }
 }
 
-impl TryFrom<WrappedFile<'_, '_>> for GzFile {
+impl TryFrom<WrappedFile<'_, '_>> for GzFile
+    {
     type Error = std::io::Error;
     fn try_from (wf: WrappedFile) -> Result<Self, Self::Error> {
         let mut buf: Vec<u8> = Vec::new();
         let mut f = wf.file;
         f.read_to_end(&mut buf)?;
-        let mut gz_file = GzFile::try_from(buf)?;
+        let mut gz_file: GzFile = TryFrom::try_from(buf)?;
         gz_file.path = Some(wf.path.to_path_buf());
         Ok(gz_file)
     }
 }
 
 impl List for GzFile {
-    const HEADER_SIZE: f64 = GzFile::HEADER_SIZE_F64;
+
+    fn header_size(&self) -> f64 {
+        return 18.0;
+    }
+
     fn list(&self, opt: &Opt) -> (f64, f64) {
         if opt.verbose > 0 {
             let dt = self.modified_on();
-            let datestring = format!("{} {}", Self::month(dt.date().month()), dt.date().day());
-            let timestring = format!("{}:{:02}", dt.time().hour(), dt.time().minute());
-            print!("{:<8}{:<12x}{:<8}{:<8}", "defla", self.crc32, datestring, timestring)
+            print!("{:<8}{:<12x}{:<8}{:<8}", "defla", self.crc32, Self::datestring(&dt), Self::timestring(&dt))
         }
+        let uncompressed_filename: String = Self::get_filename_str (&self.stored_filename, &self.path, opt);
         let compressed_size: u32 = self.raw.len().try_into().unwrap();
-        let compressed_size: f64 = Self::bytes_bound_check(compressed_size.try_into().unwrap(), opt, true).unwrap();
-        let uncompressed_size: f64 = Self::bytes_bound_check(self.uncompressed_size.try_into().unwrap(), opt, false).unwrap();
-        if opt.name {
-            match &self.stored_filename {
-                Some(s) => println!("{:<8}\t{:<8}\t{:>8.1}%\t{:<8}\t", self.raw.len(), self.uncompressed_size,
-                    Self::calculate_ratio(compressed_size, uncompressed_size), s),
-                None => println!("{:<8}\t{:<8}\t{:>8.1}%\t{:<8}\t", self.raw.len(), self.uncompressed_size,
-                    Self::calculate_ratio(compressed_size, uncompressed_size), "???")
-            }
-        }
-        else {
-            let uncompressed_filename = if let Some(p) = &self.path {
-                let uncompressed_filename = match util::make_ofname(&p, opt) {
-                    Ok(boxed_path_buf) => boxed_path_buf,
-                    Err(_) => Box::new(PathBuf::from_str("").unwrap())
-                };
-                String::from((*uncompressed_filename).to_str().unwrap())
-            }
-            else{
-                String::from("????")
-            };
-            println!("{:<8}\t{:<8}\t{:>8.1}%\t{:<8}\t", self.raw.len(), self.uncompressed_size,
-                Self::calculate_ratio(compressed_size, uncompressed_size), uncompressed_filename)
-        }
+        let compressed_size: f64 = Self::bytes_bound_check(compressed_size.try_into().unwrap(), opt, true, self.header_size()).unwrap();
+        let uncompressed_size: f64 = Self::bytes_bound_check(self.uncompressed_size.try_into().unwrap(), opt, false, self.header_size()).unwrap();
+        println!("{:<8}\t{:<8}\t{:>8.1}%\t{:<8}\t", compressed_size, self.uncompressed_size,
+            Self::calculate_ratio(compressed_size, Some(uncompressed_size), self.header_size()), uncompressed_filename);
         return (compressed_size, uncompressed_size)
     }
 }
 
 impl Zip for GzFile {
-    fn compress<R: Read>(input: R, opt: &Opt) -> Result<Vec<u8>, std::io::Error> {
-        zip::from(input, opt.level.try_into().unwrap())
+    fn compress<R: Read>(input: R, wdata: Option<WorkData>, opt: &Opt) -> Result<Vec<u8>, std::io::Error> {
+        let os = GzFile::os();
+        let gz = match wdata {
+            Some(wdata) => GzBuilder::new()
+                            .filename(wdata.orig_name.unwrap().as_str())
+                            .mtime(wdata.mtime.unwrap().try_into().unwrap())
+                            .operating_system(os)
+                            .write(Vec::new(), Compression::new(opt.level.try_into().unwrap())),
+            None => GzBuilder::new()
+                        .operating_system(os)
+                        .write(Vec::new(), Compression::new(opt.level.try_into().unwrap()))
+        };
+        let compressed = zip::from_encoder(input, gz)?;
+        Ok(compressed)
     }
 
-    fn compress_into<R: Read>(input: R, opt: &Opt) -> Result<Box<Self>, std::io::Error> {
-        let res = Self::compress(input, opt)?;
-        let s = Self::try_from (res)?;
+    fn compress_into<R: Read>(input: R, wdata: Option<WorkData>, opt: &Opt) -> Result<Box<Self>, std::io::Error> {
+        let res = Self::compress(input, wdata, opt)?;
+        let s = std::convert::TryFrom::try_from (res)?;
         Ok(Box::new(s))
     }
 
     fn decompress (self) -> Result<Vec<u8>, std::io::Error> {
-        unzip::from(&self.raw[..])
+        let mut gz = MultiGzDecoder::new(&self.raw[..]);
+        let mut outbuf: Vec<u8> = Vec::new();
+        gz.read_to_end(&mut outbuf)?;
+        Ok(outbuf)
     }
 }
 
 impl Test for GzFile {
     fn test (self, opt: &Opt) -> bool {
+        fn err(opt: &Opt) -> bool {
+            if opt.verbose > 0 {
+                println!(" CORRUPTED");
+            }
+            return false
+        }
+
         match GzFile::decompress(self) {
             Ok(b) => {
                 if let Err(_) = std::io::stdout().write_all(b.as_slice()){
-                    return false
+                    return err(opt);
                 }
                 if let Err(_) = std::io::stdout().flush() {
-                    return false
+                    return err(opt);
                 }
                 if opt.verbose > 0 {
                     println!(" OK");
                 }
                 true
             }
-            Err(_) => false
+            Err(_) => {
+                return err(opt);
+            }
         }
     }
 }
 
 impl GzFile {
-    const HEADER_SIZE_F64: f64 = 18.0;
     const HEADER_SIZE_USIZE: usize = 18;
+
+    pub fn is_magic_num (bytes: &[u8]) -> bool {
+        return bytes[0] == 31 && bytes[1] == 139
+    }
 
     pub fn modified_on(&self) -> DateTime<Local> {
         Local.timestamp (self.mtime.into(), 0)
     }
-}
 
-fn parse_flags (byte: u8) -> GzFlags {
-    GzFlags {
-        ftext: util::bit_set(byte, 0b0000_0001),
-        fhcrc: util::bit_set(byte, 0b0000_0010),
-        fextra: util::bit_set(byte, 0b0000_0100),
-        fname: util::bit_set(byte, 0b0000_1000),
-        fcomment: util::bit_set(byte, 0b0001_0000)
-    }
-}
-
-fn get_str_if_set  (hpos: &mut usize, buf_slice: & [u8], cond: bool) -> Option<String> {
-    if cond {
-        if let Ok((s, pos)) = util::str_seek(*hpos, buf_slice) {
-            *hpos += pos;
-            return Some(String::from(s));
+    fn parse_flags (byte: u8) -> GzFlags {
+        GzFlags {
+            ftext: util::bit_set(byte, 0b0000_0001),
+            fhcrc: util::bit_set(byte, 0b0000_0010),
+            fextra: util::bit_set(byte, 0b0000_0100),
+            fname: util::bit_set(byte, 0b0000_1000),
+            fcomment: util::bit_set(byte, 0b0001_0000)
         }
     }
-    return None;
+
+    pub fn os () -> u8 {
+        #[cfg(target_os = "windows")]
+        return 0;
+        #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux"))]
+        return 3;
+        #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows")))]
+        return 255;
+    }
 }
