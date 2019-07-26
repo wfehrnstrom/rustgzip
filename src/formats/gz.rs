@@ -11,6 +11,7 @@ use chrono::offset::{Local, TimeZone};
 use crate::util::WrappedFile;
 use flate2::{GzBuilder, Compression};
 use flate2::read::MultiGzDecoder;
+use crate::constants;
 
 #[derive(Debug)]
 pub struct GzFile {
@@ -126,8 +127,20 @@ impl List for GzFile {
         }
         let uncompressed_filename: String = Self::get_filename_str (&self.stored_filename, &self.path, opt);
         let compressed_size: u32 = self.raw.len().try_into().unwrap();
-        let compressed_size: f64 = Self::bytes_bound_check(compressed_size.try_into().unwrap(), opt, true, self.header_size()).unwrap();
-        let uncompressed_size: f64 = Self::bytes_bound_check(self.uncompressed_size.try_into().unwrap(), opt, false, self.header_size()).unwrap();
+        let compressed_size: f64 = match Self::bytes_bound_check(compressed_size.try_into().unwrap(), opt, true, self.header_size()) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("{}: number of bytes in compressed file is less than header size", constants::PROGRAM_NAME);
+                std::process::exit(constants::ERROR.into());
+            }
+        };
+        let uncompressed_size: f64 = match Self::bytes_bound_check(self.uncompressed_size.try_into().unwrap(), opt, false, self.header_size()) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("{}: number of bytes in compressed file is less than header size", constants::PROGRAM_NAME);
+                std::process::exit(constants::ERROR.into());
+            }
+        };
         println!("{:<8}\t{:<8}\t{:>8.1}%\t{:<8}\t", compressed_size, self.uncompressed_size,
             Self::calculate_ratio(compressed_size, Some(uncompressed_size), self.header_size()), uncompressed_filename);
         return (compressed_size, uncompressed_size)

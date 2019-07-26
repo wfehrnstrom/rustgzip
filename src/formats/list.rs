@@ -6,6 +6,8 @@ use chrono::{DateTime, Datelike, Timelike};
 use chrono::offset::Local;
 use std::str::FromStr;
 
+const HEADER_SIZE: f64 = 18.0;
+
 pub trait List {
 
     fn list(&self, opt: &Opt) -> (f64, f64);
@@ -43,7 +45,7 @@ pub trait List {
     // check that the number of bytes is not negative. If it is and we aren't forcing,
     // return an error after emitting error msg
     fn bytes_bound_check (num_bytes: f64, opt: &Opt, compressed: bool, header_size: f64) -> std::io::Result<f64> where Self: Sized {
-        if num_bytes < 18.0 {
+        if num_bytes < HEADER_SIZE {
             if opt.verbose > 1 {
                 eprintln!("{}: internal error: do_list: the number of bytes in a file\
                     cannot be less than the header size", constants::PROGRAM_NAME);
